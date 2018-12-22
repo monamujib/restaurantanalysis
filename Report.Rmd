@@ -1,0 +1,858 @@
+---
+output: 
+  flexdashboard::flex_dashboard:
+  theme: bootstrap
+  source: embed
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+Analytics of Restaurant Performances
+-----------------------------------
+
+```{r include=FALSE}
+library(MASS)
+library(tidyverse)
+library(readxl)
+library(leaflet)
+library(knitr)
+Zomatofile="~/project/zomato.xlsx"
+zomato=read_excel(Zomatofile) #importing main zomato file
+
+```
+
+Introduction {data-icon="fa-book-open"}
+=====================================
+Column
+-------------------------------------
+```{r echo = F}
+#Check India
+leaflet(zomato) %>% addTiles() %>%
+  addMarkers(clusterOptions = markerClusterOptions())
+```
+
+Column
+-------------------------------------
+This report reviews all of the statistical modeling and analysis results on data concerning various restaurants around the world. In this study we handle a large dataset with over 9,000 entries, which we have attained from Kaggle. The dataset was originally acquired by Mehta, with the help of the Zomato API.The purpose of this study is to discover and understand the root cause of what makes a successful restaurant, successful. The primary interest is to distinguish variables that have significance in regard to restaurant ratings and why that may be, in terms of various variables such as the location and status of the restaurant in question. Additionally, this report is designed to help visualize the trends in what it takes to encourage and retain high ratings within this industry. 
+
+
+From a consumer's perspective, there are many factors that can differentiate a restaurant from being average, to one that will be remembered for being great. We hypothesize that most measures provided within our dataset, such as the location, costs, cuisines, votes, table booking and delivery options, will generally have a significant impact when held against restaurant ratings. There have been many studies conducted in the past, that concerns how online reviews have the power to improve the value of a restaurant. In specific, the study lead by Anderson and Magruder (2011) discovered that a restaurant's outlook can easily be altered, with the help of online reviews. The pair had focused on the impact of positive online interactions and found that social media and online forums heavily impacted on how consumers judged the quality and services of restaurants. This leads us to believe that the variable Votes, within our dataset, may be highly significant when compared to ratings. This would suggest the level of popularity, which would influence improvements within the many attributes of restaurants. Another study, conducted by a group of students from the Vanderbilt University (2004), suggested that hygiene of restaurants has a high significance level, pertaining to restaurant success. This would suggest us to believe that location, in specific, is likely to impact restaurant ratings. 
+
+
+Tidying Data {data-icon="fa-table" .storyboard}
+===================================== 
+
+### **Loading Files From Kaggle Source** - Loading all libraries and files required for this analysis.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#------LOAD DATA------------
+library(tidyverse)
+library(readxl)
+library(leaflet)
+library(gridExtra)
+library(broom)
+library(plotly)
+library(gridExtra)
+
+#------LOAD FILES---------
+
+CCodesfile="~/project/Country-Code.xlsx"
+Zomatofile="~/project/zomato.xlsx"
+CurrencyFile="~/project/CurrencyRates.xlsx"
+
+CCodes=read_excel(CCodesfile) #importing country code file
+zomato=read_excel(Zomatofile) #importing main zomato file
+Currency=read_excel(CurrencyFile) #importing currency file
+
+```
+
+***
+The original data set contained varying currencies per country, making it difficult to compare each restaurant uniformly. We created a seperate file containing the United States Dollar ($USD) conversion rates for each country, which will be used to convert current currency figures into new standard ones.
+
+### **Data Wrangling** - Although the data is presented pre-cleaned into appropriate columns, there still remains some level of manipulation that needs to be done. 
+
+```{r echo=TRUE, warning=FALSE}
+#------ GET RID OF SOME COLUMNS & ADD NEW ONES -------------
+zomato=zomato %>% select (-c(Rating_Color,Switch_To_Order_Menu,Address,Locality_Verbose,Currency))
+#we remove currency column as it is incorrect and contains too many unique symbols
+
+#add in new columns: Country Names according to Country Code & proper currency names with conversion rates
+zomato = zomato %>% left_join(CCodes) 
+zomato = zomato %>% left_join(Currency) 
+
+#add in new column: USD Cost (for equal comparison)
+zomato = zomato %>% mutate(Avg_Cost_USD = Average_Cost_For_Two*`Conversion Rate (USD)`) 
+#Multiplied Currency Column by it's conversion rate
+
+#replacing Cuisines col. with Principal_Cuisines (the first category of cuisines for every country row)
+zomato= zomato %>% separate(Cuisines,into=c("Principal_Cuisines"),sep=',') #store "primary" cuisine types into new column and replace old with this
+
+#Make sure rating categories are ordered:
+zomato = zomato %>% mutate(Rating_Text=ordered(Rating_Text,levels=c("Excellent","Very Good","Good","Average","Poor")))
+```
+
+***
+
+We begin by removing unnecessary columns and adding in necessary ones:
+
+1. Add in countries by country code via the country code file provided by kaggle
+
+2. Add in our own currency conversion file, allowing us to convert average cost for two into the USD amount and storing it in it's own column called "Avg Cost USD".
+
+We notice there were many cuisines listed per restaurant, so to simplify things for analytic purposes, we extract the first cuisine listed by each restaurant.
+
+### **Removing Missing Values** - Since we will focusing on the ratings of restaurants, we remove restaurants with missing aggregate rating values.
+
+```{r echo=TRUE, warning=FALSE}
+#---------REMOVE MISSING VALUES----------
+#we notice that there are several "0" rated stores for even expensive places so we decided to remove no rating stores
+zomato[zomato == 0] = NA #remove values that have zero
+zomato[zomato == "Not rated"] = NA #remove unrated values
+zomato = zomato %>% filter(!is.na(Aggregate_Rating))
+
+india.data = zomato %>% filter(Country == "India")
+us.data = zomato %>%  filter(Country== "United States")
+```
+
+
+Exploratory Analysis {data-icon="fa-chart-pie" .storyboard}
+=====================================
+
+### **Distribution Of Variables** - Rating Text & Aggrgate Rating
+
+
+```{r echo=F, fig.width=11}
+library(RColorBrewer)
+
+plot_themes = theme(plot.title=element_text(family="Palatino", face="bold.italic", size=15),legend.title = element_text(face = "italic", family = "Palatino"), 
+                  legend.text = element_text(face = "bold.italic",family = "Palatino"), 
+                  axis.title = element_text(family = "Palatino", face="italic",size = (10)),
+                  axis.text.y.left = element_text(family = "Palatino", colour = "darkgrey", size = (10)),
+                  axis.text.x.bottom = element_text(angle =90,family = "Palatino", colour = "darkgrey", size = (10)))
+
+bplot_themes = theme(plot.title=element_text(family="Palatino", face="bold.italic", size=15),legend.title = element_text(face = "italic", family = "Palatino"),
+                     #plot.margin = margin(2,-0.5,2,-0.5, "cm"),
+                    legend.text = element_text(face = "bold.italic",family = "Palatino"), 
+                    axis.title = element_text(family = "Palatino", face="italic",size = (10)),
+                    axis.text.y.left = element_text(family = "Palatino", colour = "darkgrey", size = (10)),
+                    axis.text.x.bottom = element_blank())#element_text(angle =90,family = "Palatino", colour = "black", size = (2)))
+
+getPalette= colorRampPalette(brewer.pal(9,"RdBu"))
+
+
+#----Ratings----
+
+# Rating Text Dist
+Rating_TextDist=ggplot(zomato,aes(x=Rating_Text,fill=Country))+geom_bar()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of Rating Text",x="Rating Text", y="Restaurant Frequency")+
+  scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+Rating_TextDist
+
+# Aggregate Rating Distribution
+AgRatingDist=ggplot(zomato,aes(x=Aggregate_Rating,fill=Country))+geom_histogram()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of Aggregate Rating",x="Aggregate Rating", y="Restaurant Frequency")
+AgRatingDist
+
+```
+
+***
+We first start off by plotting distributions of all our variables, to help understand the strengths and weaknesses of this dataset.
+
+**Rating Text:**
+
+After plotting the distribution of Rating Text, we see that majority of the restaurants from our data is rated 'Average' and the number of Restaurants decrease, almost exponentially, as the rating gets better. This is not surprising as there should only be a limited amount of 'Excellent' and 'Very Good' restaurants, since there is often a differentiating factor between good and great places that only a few can achieve. We notice that this is slightly right skewed but that seems to make sense, given the context behind it. 
+
+**Aggregate Rating:**
+
+To visualize the distribution of Aggregate Rating, we decided to generate a histogram. We notice here that the distribution of this variable is relatively normal, with most of the Ratings ranging from three to four. This would suggest that on average, most restaurants in our study are rated relatively well by their consumers. There is a bit of a high bump around 3.84; however, this is not much of a setback since we are working with a relatively large dataset
+
+Both of these variables measure the success factor of restaurants in this study. It is clear that the distributions of the two are similar but not the exact same. Aggregate Rating seems to be more normally distributed than Rating Text, most likely because it is a more detailed measure.  
+
+
+### **Distribution Of Variables** - Price Range & Average Cost
+```{r echo=F, fig.width=10, warning=FALSE}
+#Average Cost 
+AvgCostDist=ggplot(zomato,aes(x=Avg_Cost,fill=Country))+geom_histogram()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of Average Cost USD",x="Average Cost USD", y="Restaurant Frequency")
+knitr::include_graphics('/Users/mariamujib/Documents/project/cost d.png')
+
+# Price Range
+Price_RangeDist=ggplot(zomato,aes(x=Price_Range,fill=Country))+geom_bar()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of Price Range",x="Price Range", y="Restaurant Frequency")
+Price_RangeDist
+```
+
+
+***
+**Average Cost USD:**
+
+Here we focus on the Average Costs of restaurants. It is clear to see how severely right skewed the distribution is. This helps us understand that almost all restaurants, other than the few outliers to the right, serve at a relatively affordable price that would range roughly beneath 74 USD. If we take a closer look at the costs, located within the tail of this histogram, we notice that they are all within the hundreds. Most of these restaurants are located in more developed countries, such as the United Kingdom, the United States, or countries that have high costs of living, such as Qatar, UAE, and Singapore. Interestingly enough, the highest outlier is just under 360 USD, and the restaurant in question is located in Singapore, a country with one of the highest GDP per capita in the world.
+
+**Price Range:**
+
+Price Range seems to behave in a very similar way to Average Costs, which also suggests that most places are more affordable than not, leaving only a few choices ranging in higher prices.     
+
+### **Distribution Of Variables** - Votes
+```{r echo=F, fig.width=11}
+# Votes
+VotesDist =ggplot(zomato,aes(x=Votes,fill=Country))+geom_histogram(bins = 100) +plot_themes+
+  scale_fill_manual(values = getPalette(15))+
+  labs(title="Distribution of Votes",x="Votes",y="Restaurant Frequency")
+#skewed right
+VotesDist
+```
+
+***
+
+**Distribution of Votes:**
+
+Just like Average Costs, the distribution pertaining to the frequency of Votes each restaurant accumulated, is also heavily skewed to the right. Most of the Votes seem to be under a frequency of 100. It is ironic that both the lowest and highest Vote counts of 4 and 10930, were collected from restaurants in India. This may be due to the wide scale of information we have from India, which would allow for such diverse popularity levels within restaurants.
+
+### **Distribution Of Variables** - Table Booking, Online Delivery & Delivering Now
+
+```{r echo=F, fig.width=11}
+#----Booking/Delivery------
+
+# Table Booking
+Table_BookingDist=ggplot(zomato,aes(x=Has_Table_Booking,fill=Country))+geom_bar()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Table Booking",x="Table Booking Option", y="Restaurant Frequency")
+
+# Online Delivery
+Online_DeliveryDist=ggplot(zomato,aes(x=Has_Online_Delivery,fill=Country))+geom_bar()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Online Delivery",x="Online Delivery Option", y="Restaurant Frequency")
+
+# Delivering Now
+DeliveryDist=ggplot(zomato,aes(x=Is_Delivering_Now,fill=Country))+geom_bar()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Delivering Now",x="Delivering Now Option", y="Restaurant Frequency")
+
+grid.arrange(Table_BookingDist, Online_DeliveryDist,DeliveryDist, ncol=3) 
+```
+
+***
+**Distribution of Table Booking, Online Delivery & Delivering Now:**
+
+All three variables of, Table Booking, Online Delivery and Delivering Now, has a similar characteristic, which states that there are only a few restaurants that offer these options to their consumers. It would be interesting to see how these options effect aggregate rating, if they have any effect at all.
+
+### **Distribution Of Variables** - Locality
+
+```{r echo=F, fig.width=11}
+#----Location----
+# Locality distribution
+LocalityDist=ggplot(zomato,aes(x=Locality,fill=Country))+geom_bar()+
+  bplot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of Locality",y="Restaurant Frequency")
+LocalityDist #messy
+```
+
+***
+**Distribution of Locality:**
+
+Once again, we notice right away that the most dominant country within this distribution is India, which unfortunately serves as one of the limitations of this dataset. 
+
+### **Distribution Of Variables** - City
+
+```{r echo=F, fig.width=11}
+# City Distribution
+CityDist=ggplot(zomato,aes(x=City,fill=Country))+geom_bar()+
+  bplot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of City",y="Restaurant Frequency")
+CityDist
+```
+
+***
+**Distribution of City:**
+
+Clearly the most dominant city within our dataset is New Delhi, which happens to serve as the capital of India. This is not surprising since our data heavily concerns India. The second most concentrated city is the city of Gurgaon, which is also in India. This is not surprising as majority of this data was attained from India, explaining why this distribution is so heavily asymmetric. 
+
+### **Distribution Of Variables** - Country
+
+```{r echo=F, fig.width=11}
+# Country Dist
+CountryDist=ggplot(zomato,aes(x=Country,fill=Country))+geom_bar()+
+  plot_themes+scale_fill_manual(values = getPalette(15))+
+  labs(title = "Distribution of Country",y="Restaurant Frequency")
+CountryDist #very clear that india is way more dominant
+```
+
+***
+**Distribution of Country:**
+
+We decided to produce a histogram to get a better understanding for the assortment of countries, in which our data is based on. It was surprising to see that more than 80% of the data was collected from restaurants located in India. We notice that the United States is the second most concentrated place, after India. In comparison to these two countries, the rest of the data is scattered lightly throughout the globe.  
+
+###**Variables vs. Restaurant Ratings** - Average Cost USD & Price Range
+
+```{r echo=F, fig.width=10}
+# Agg Rating VS:
+
+#------G21-------
+
+# VS Average Cost USD
+AgRating_AvgCosts=ggplot(zomato,aes(x=as.factor(Aggregate_Rating),y=Avg_Cost_USD))+geom_boxplot()+plot_themes+
+  labs(title = "Aggregate Rating VS Average Cost",x="Aggregate Rating", y="Average Cost")
+knitr::include_graphics('/Users/mariamujib/Documents/project/agr cost.png')
+
+# VS Price Range 
+AgRating_PriceRange=ggplot(zomato,aes(x=as.factor(Price_Range),y=Aggregate_Rating))+geom_boxplot()+plot_themes+
+  labs(title = "Aggregate Rating VS Price Range",x="Price Range",y="Aggregate Rating")
+AgRating_PriceRange 
+```
+
+***
+Now that we've learnt about the characteristics of each of the variables within this data, we will start testing how each variable behaves when help against restaurant ratings.
+
+**Aggregate Rating VS Average Cost USD:**
+
+There seems to be a slow upward trend here, suggesting that rating increases as costs goes up. In industries like this, similar trends can be expected as the quality of restaurants heavily depend costs.
+
+**Aggregate Rating VS Price Range:**
+
+Similar to Average Costs, Price Range once again is telling a similar story, due to its clear positive slope. There are a few outliers within the Price Range of 3 and 4; however, it would be safe to disregard this when dealing with a large dataset.
+
+###**Variables Reacting Against Restaurant Ratings** - Votes & Country
+
+```{r echo=F, fig.width=10}
+#--------G22----------
+
+# VS Votes (to test if popularity has an impact)
+AgRating_Votes=ggplot(zomato,aes(x=as.factor(Aggregate_Rating),y=Votes))+geom_boxplot()+plot_themes+
+  labs(title = "Aggregate Rating VS Votes",x="Aggregate Rating",y="Votes")
+AgRating_Votes#so there is a steady increase 
+
+# VS Country 
+AgRating_Country=ggplot(zomato,aes(x=Country,y=Aggregate_Rating))+geom_boxplot()+plot_themes+
+  labs(title = "Aggregate Rating VS Country",x="Country",y="Aggregate Rating")
+AgRating_Country
+```
+
+***
+**Aggregate Rating VS Votes:**
+
+The purpose of comparing Votes to Aggregate rating is to see if popularity plays a part in the success of a restaurant. In this case, it does seem to have a moderate impact, as the median levels of ratings seem to gradually increase, as the number of Votes go up. The upward slope hits its maximum point at a rating of 4.7 with a mean of 649 votes, after which we can see a light decrease. There does seem to be a number of outliers but that tends to be common within large sets of data.
+
+**Aggregate Rating VS Country:**
+
+We can see here that the medians of all countries, lie above the Aggregate Rating of 3. This would suggest that all countries normally do well, in terms of restaurant ratings. The highest mean Aggregate Rating of 4.5 was attained in the Philippines and the lowest rating of 3.3 was actually from India. This may be due to the fact that there is a higher cost of living in the Philippines than India, causing ratings to rise.
+
+###**Variables Reacting Against Restaurant Ratings** - Table Booking, Online Delivery & Delivering Now
+
+```{r echo=F, fig.width=11}
+#-----G23----------
+
+# VS Table Booking Option
+AgRating_TableBooking=ggplot(zomato,aes(x=Has_Table_Booking,y=Aggregate_Rating))+geom_boxplot()+plot_themes+
+  labs(title = "Table Booking",x="Table Booking Option",y="Aggregate Rating")
+
+
+# VS Online Delivery 
+AgRating_OnlineDelivery=ggplot(zomato,aes(x=Has_Online_Delivery,y=Aggregate_Rating))+geom_boxplot()+
+  plot_themes+labs(title = "Online Delivery",x="Online Delivery Option",y="Aggregate Rating")
+ #interesting, not much of an effect, prob because of india
+AgRating_OnlineDelivery
+
+# VS Delivering Now
+AgRating_DeliveringNow=ggplot(zomato,aes(x=Is_Delivering_Now,y=Aggregate_Rating))+geom_boxplot()+plot_themes+
+  labs(title = "Delivering Now",x="Delivering Now",y="Aggregate Rating")
+AgRating_DeliveringNow
+
+grid.arrange(AgRating_TableBooking, AgRating_OnlineDelivery, AgRating_DeliveringNow, ncol =3) 
+```
+
+***
+**Aggregate Rating VS Table Booking, Online Delivery and Delivering Now:**
+
+Unlike Table bookings, which has an even distribution for both options and displays a positive slope as Aggregate Rating increases, both Online Delivery and Delivering Now options seem to have no effect as Aggregate Rating increases. It seems that the medians for both options within both variables, Online Delivery and Delivering Now, are constant around the Aggregate Rating of 3.4; however, the distributions do differ. We notice that there lie a few outliers, but they can be safely dismissed, given the size of this dataset.
+
+
+### **Distributions of: India compared VS United States** - Rating Text 
+
+```{r echo=F, fig.width=10}
+iplot_themes = theme(plot.title=element_text(family="Palatino", face="bold.italic", colour = "maroon", size=15),legend.title = element_text(face = "italic", family = "Palatino"), 
+                    legend.text = element_text(face = "bold.italic",family = "Palatino"), 
+                    axis.title = element_text(family = "Palatino", colour = "maroon",face="italic",size = (10)),
+                    axis.text.y.left = element_text(family = "Palatino", colour = "darkgrey", size = (10)),
+                    axis.text.x.bottom = element_text(angle =90,family = "Palatino", colour = "darkgrey", size = (10)))
+
+#----->Distributions of India VS US-----
+
+#Distribution of Ratings - how is india different from the United States?
+
+#-----Rating Text------
+India_Rating_TextDist=ggplot(india.data,aes(x=Rating_Text))+geom_bar()+
+  iplot_themes+
+  labs(title = "Distribution of Rating Text: India",x="Rating Text", y="Restaurant Frequency")+
+  scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+India_Rating_TextDist
+
+US_Rating_TextDist=ggplot(us.data,aes(x=Rating_Text))+geom_bar()+
+  plot_themes+
+  labs(title = "Distribution of Rating Text: United States",x="Rating Text", y="Restaurant Frequency")+
+  scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+US_Rating_TextDist
+
+```
+
+***
+After noticing the extremely uneven assortment of which countries our data originated from, it felt necessary to take a closer look. We then decided to compare how variables react to restaurant ratings, within India and the United States, which was the second most concentrated country in our data. First we start by comparing their variable distributions.
+
+**Distribution of Rating Text:**
+
+The distributions of Rating Text for India compared to the United States is interesting, since both are asymmetric but are skewed to different directions. Within India, the data is skewed to the right, whereas in United States it is skewed to the left. We can notice that the most common rating within restaurants in India is "Average"; however, in United States, most restaurants are rated as "Very Good".
+
+### **Distributions of: India compared VS United States** - Rating Text 
+
+```{r echo=F, fig.width=10}
+#------Aggregate Rating-------
+India_AgRatingDist=ggplot(india.data,aes(x=Aggregate_Rating))+geom_bar()+
+  iplot_themes+
+  labs(title = "Distribution of Aggregate Rating: India",x="Aggregate Rating", y="Restaurant Frequency")
+India_AgRatingDist
+
+US_AgRatingDist=ggplot(us.data,aes(x=Aggregate_Rating))+geom_bar()+
+  plot_themes+
+  labs(title = "Distribution of Aggregate Rating: United States",x="Aggregate Rating", y="Restaurant Frequency")
+US_AgRatingDist
+
+```
+
+***
+**Distribution of Aggregate Rating:**
+
+In India, Aggregate Rating is more normally distributed. The larger chunk of restaurants seems to fall within Aggregate Rating ranging from 3 to a bit over 3.5, which seems to align nicely with the distribution of Rating Text. Within the United States we see something similar, where the distribution of Aggregate Rating seems to be parallel to Rating text, once again. We can roughly conclude that in general, restaurants in the United States are rated better than the restaurants in India.
+
+### **Distributions of: India compared VS United States** - Average Cost USD 
+
+```{r echo=F, fig.width=10}
+# ------Cost-------
+India_CostDist=ggplot(india.data,aes(x=Avg_Cost_USD))+geom_histogram()+
+  iplot_themes+
+  labs(title = "Distribution of Average Cost USD: India",x="Average Cost USD", y="Restaurant Frequency")
+
+knitr::include_graphics('/Users/mariamujib/Documents/project/icost.png')
+
+
+US_CostDist=ggplot(us.data,aes(x=Avg_Cost_USD))+geom_histogram()+
+  plot_themes+
+  labs(title = "Distribution of Average Cost USD: United States",x="Average Cost USD", y="Restaurant Frequency")
+
+knitr::include_graphics('/Users/mariamujib/Documents/project/uccost.png')
+
+```
+
+***
+**Distribution of Average Cost USD:**
+
+Looking at the Cost distribution of India, it is interesting to find that most restaurants fall within an affordable range. The dominant portion of restaurants in India cost under 25 USD. When focusing on United States, we can immediately notice that there are specific average costs here, unlike India. The majority of restaurants in this country, has an average cost of 10, 25 and 40 USD. This is most likely due to the lack of information that is provided for the United States. Both countries have their share of a few outliers, that can be dismissed as the dataset is fairly large.
+
+### **Distributions of: India compared VS United States** - City 
+
+```{r echo=F, fig.width=10}
+India_CityDist=ggplot(india.data,aes(x=City))+geom_bar()+
+  iplot_themes+labs(title = "Distribution of City: India",x="Cities")
+India_CityDist
+
+US_CityDist=ggplot(us.data,aes(x=City))+geom_bar()+
+  plot_themes+labs(title = "Distribution of City: United States",x="Cities")
+US_CityDist
+```
+
+***
+**Distribution of City:**
+
+Earlier we discovered that almost 80% of the information within this dataset was collected from India, once again we experience a similar shock by noticing how extremely asymmetric the distribution of City is, in India. Almost 50% of the data collected within India was from its capital, New Delhi. Though we did not have as much information pertaining to the United States, we can notice that the distribution of City, in United States, is a more evenly distributed nonetheless.
+
+### **Reacting Variables: India compared VS United States** - Average Cost USD
+
+```{r echo=F, fig.width=10}
+
+# Cost-------- 
+India_AgRating_AvgCost=ggplot(india.data,aes(x=Avg_Cost_USD,y=Aggregate_Rating))+geom_point()+
+  iplot_themes+labs(title = "Aggregated Rating VS Average Cost USD: India",x="Average Cost USD",y="Aggregate Rating")
+
+knitr::include_graphics('/Users/mariamujib/Documents/project/i2cost.png')
+
+US_AgRating_AvgCost=ggplot(us.data,aes(x=Avg_Cost_USD,y=Aggregate_Rating))+geom_point()+
+  plot_themes+labs(title = "Aggregated Rating VS Average Cost USD: United States",x="Average Cost USD",y="Aggregate Rating")
+
+knitr::include_graphics('/Users/mariamujib/Documents/project/u2cost.png')
+
+```
+
+***
+We've looked into the similarities and differences of distributions, pertaining to India and the United States, now we focus on how both countries contrast when testing the relations of different variables, against restaurant ratings
+
+**Aggregate Rating VS Average Cost USD:**
+
+This comparison makes it easy to notice the disadvantage United States has, due to the lack of information, in comparison to India. Taking a look at India first, we notice that under the 12 USD mark, there is a large portion of restaurants that can vary immensely in Aggregate Rating. Meaning that for 12 USD, a consumer can find a place to eat that is very highly rated, poorly rated and everything in between. This is most likely due to the amount of information we have from India. For the United States, we share a similar concept of having a wide range for Aggregate Rating, given Average Cost. The difference with this country is that there is a lacking variety, when focusing on Average Cost, which was mentioned before. Within both countries however, we do see that there is a slightly positive relation between these two variables, suggesting that when Average cost increases, so does Aggregate Rating but the options of restaurants in turn decreases.
+
+### **Reacting Variables: India compared VS United States** - Price Range
+
+```{r echo=F, fig.width=10}
+# VS Price Range------------
+India_RatingT_PriceRange=ggplot(india.data,aes(x=Rating_Text, fill=as.factor(Price_Range)))+geom_bar(position="dodge")+iplot_themes+
+  labs(title = "Rating Text VS Price Range: India",x="Rating Text",y="Restaurant Frequency",fill="Price Range")+
+  scale_fill_manual(values = getPalette(4))+scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+India_RatingT_PriceRange
+
+US_RatingT_PriceRange=ggplot(us.data,aes(x=Rating_Text, fill=as.factor(Price_Range)))+geom_bar(position="dodge")+plot_themes+
+  labs(title = "Rating Text VS Price Range: United States",x="Rating Text",y="Restaurant Frequency",fill="Price Range")+scale_fill_manual(values = getPalette(4))+scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+US_RatingT_PriceRange
+
+```
+
+***
+**Rating Text VS Price Range:**
+
+These plots resemble the distributions of the variable, Rating Text, as seen before; however, it is interesting to see that unlike India, United States has a fairly even distribution of Price Range within each rating category. We can see that within the more common ratings of "Good", "Very Good" and "Excellent", most restaurants fall in the Price Range of 2, followed by 1, 3 and then 4. In India, we see that the most frequent rating of "Average", has the highest number of restaurants within the Price Range of 1. This plot lets us see that for both countries, the common Price Ranges, amongst restaurants, are more affordable than not.  
+
+### **Reacting Variables: India compared VS United States** - Votes
+
+```{r echo=F, fig.width=10}
+#------->Ag Rating of India VS World
+# Agg Rating VS
+
+# Votes (popularity effect)-------
+India_RatingT_Votes=ggplot(india.data,aes(x=Rating_Text,y=Votes))+geom_boxplot()+iplot_themes+
+  labs(title = "Rating Text VS Votes: India",x="Rating Text",y="Votes")+scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+India_RatingT_Votes
+
+US_RatingT_Votes=ggplot(us.data,aes(x=Rating_Text,y=Votes))+geom_boxplot()+plot_themes+
+  labs(title = "Rating Text VS Votes: United States",x="Rating Text",y="Votes")+scale_x_discrete(limits=c("Poor","Average","Good","Very Good","Excellent"))
+US_RatingT_Votes
+
+```
+
+***
+**Rating Text VS Votes:**
+
+Both India and United States have a positive relationship with Votes, when comparing to Rating Text. This suggests that as the ratings increase, Votes do as well and this can serve as a popularity factor as well. This would mean that more popular destinations have a higher change of being rated better. The differentiating factor within the two countries is that, India seems to have less of an impact than United states. This is because the slope of medians, within the United States, is more dramatic. We also notice that there is a dip between the ratings "Good" and "Poor" within the plot of United States. This may be caused due to there being a lack of information, or the fact that as a developed country, people are more likely to use technology more often to share bad reviews. This would then explain why there are more votes for restaurants that attained poor ratings.
+
+###**Map of Restaurants in New Delhi** - Overview of how the distribution of restaurants are in New Delhi
+```{r}
+leaflet(india.data) %>% addTiles() %>% addMarkers(clusterOptions = markerClusterOptions()) %>% setView(77.2090,28.6139,zoom=11)
+```
+
+First Stage Analysis {data-icon="fa-chart-bar" .storyboard}
+=====================================
+### **Linear Regression** - Model with all the possible predictor variables in our dataset.
+
+```{r echo=FALSE}
+india.data = india.data %>% mutate(Principal_Cuisines=fct_relevel(Principal_Cuisines,"North Indian"))
+india.data = india.data %>% mutate(City=fct_relevel(City,"New Delhi"))
+india.data = india.data %>% mutate(Locality=fct_relevel(Locality,"Connaught Place"))
+library(sjPlot)
+fit1 = lm(Aggregate_Rating~City+Locality+Principal_Cuisines+Has_Table_Booking+Has_Online_Delivery+Price_Range+Avg_Cost_USD,data=india.data,weights=Votes)
+tab_model(fit1, terms = c("(Intercept)"))
+fit1.sum = as.data.frame(coef(summary(fit1)))
+DT::datatable(fit1.sum, options = list(
+  bPaginate = FALSE
+))
+
+```
+
+***
+
+Since we are aware most of our data comes from New Delhi (specifically Connaught Place) and the most common cuisine is North Indian, we set our baseline for City, Locality and Principal Cuisines in respect to this. This is to gain a general insight on how deviating from these popular choices, effects aggregate rating. The first linear regression model includes all of the following variables:
+
+- Aggregate Rating (response variable)
+
+- City
+
+- Principal Cuisine
+
+- Table Booking Option
+
+- Online Delivery Option
+
+- Price Range
+
+- Average Cost for Two (USD)
+
+This model yields a R squared value of 59.73% and is statistically significant. Included on the left is a table containing all the coefficent estimates for this model.
+
+### **Drop Test** - Checking if any variables can be dropped from the current model
+```{r echo=F}
+drop1(fit1,test="F")
+fit1 = lm(Aggregate_Rating~City+Locality+Principal_Cuisines+Has_Table_Booking+Has_Online_Delivery+Avg_Cost_USD,data=india.data,weights=Votes)
+```
+
+***
+
+Conducting a drop test using F statistic shows we can drop the variable *Price Range* from our model without it being affected. Thus, we remove this variable and proceed to our diagnostic graph analysis. 
+
+### **Diagnostic Graphs (1)** - Checking the model's residual fitted graph for accuracy of this model
+```{r echo=F, fig.width=11}
+  ggplot(data=fit1,aes(y=.resid,x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+```
+
+***
+
+Our residuals seem to be rather random, with the bulk of it being around zero. The fitted line helps illustrate the overall trend of the residuals which in our case seems to fall slightly below zero. 
+
+### **Diagnostic Graphs (2)** - Checking normality of residuals via QQ Plot
+```{r echo = F, fig.width=11}
+p2 <-ggplot(fit1,aes(sample=.resid))+stat_qq()+
+  stat_qq_line()+xlab("Theoretical Quantiles")+ylab("Standardized Residuals")
+p2<-p2+ggtitle("Normal Q-Q")+theme_bw()
+
+p2
+```
+
+***
+QQ Plot shows that the center region of the residuals are normal but the lower tail deviates heavily along with a few outliers in the upper tail.
+
+### **Diagnostic Graphs (3)** - Checking for homoscedasticity via Scale Location
+```{r echo=F, fig.width=11}
+plot(fit1,3)
+```
+
+***
+
+We ideally want to observe a rather straight horizontal line for this plot to prove equal variance of errors. Unfortunately, this scale location plot suggests heavy heteroscedasticty.
+
+### **Diagnostic Graphs (4)** - Checking for influential observations via Cook's Distance
+```{r echo=F, fig.width=11}
+plot(fit1,4)
+```
+
+***
+
+We notice 3 main observations: 1525, 1786 and 3998 are the most influential observations for our regression.
+
+Second Stage Analysis {data-icon="fa-chart-line" .storyboard}
+=====================================
+
+### **Transforming Response Variable** - We apply our first transformation to the dependent variable and observe its effects.
+
+```{r include=FALSE}
+india.data = india.data %>% mutate(Transformed_Rating = log10(Aggregate_Rating/(5-Aggregate_Rating)))
+```
+
+```{r echo=F}
+fit.t = lm(Transformed_Rating~City+Locality+Principal_Cuisines+Has_Table_Booking+Has_Online_Delivery+Avg_Cost_USD,data=india.data,weights=Votes)
+tab_model(fit.t, terms = c("(Intercept)"))
+fitt.sum = as.data.frame(coef(summary(fit.t)))
+DT::datatable(fitt.sum, options = list(
+  bPaginate = FALSE
+))
+
+```
+
+***
+
+We add a new transformed variable to dataset called "Transformed Rating". Since our Aggregate Rating level is limited between the values 0 to 5, we set a restriction that prevents rating estimates to go above or beyond this range. The transformation is as follows: $$log_{10}{\frac{Aggregate Rating}{5-Aggregate Rating}}$$
+
+The transformed linear regression model returns an improved R squared value of 66.2% (a 7% increase from original model).
+
+### **Drop Test** - Checking if any variables can be dropped from the transformed model
+```{r echo=F}
+drop1(fit.t,test="F")
+fit.2t = lm(Transformed_Rating~City+Locality+Principal_Cuisines+Has_Table_Booking+Avg_Cost_USD,data=india.data,weights=Votes)
+
+```
+
+***
+
+Conducting a drop test using F statistic shows we can now drop another variable *Has Online Delivery* from our transformed model without it being affected.
+
+### **Diagnostic Graphs (1)** - Fitting a residuals graph shows random residual points in the transformed model
+
+```{r echo=F, fig.width=14}
+ggplot(data=fit.2t,aes(y=.resid,x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+
+```
+
+### **Diagnostic Graphs (2)** - QQ Plot improved from original model but the upper and lower tails deviate from normality. 
+
+```{r echo = F, fig.width=14}
+p2t <-ggplot(fit.2t,aes(sample=.resid))+stat_qq()+
+  stat_qq_line()+xlab("Theoretical Quantiles")+ylab("Standardized Residuals")
+p2t<-p2t+ggtitle("Normal Q-Q")+theme_bw()
+
+p2t
+```
+
+
+
+### **Diagnostic Graphs (3)** - Heteroscedasticity still evident and requires more investigation
+```{r echo=F, fig.width=14}
+p3t<-ggplot(fit.2t, aes(.fitted, sqrt(abs(.stdresid))))+geom_point(na.rm=TRUE)
+p3t<-p3t+stat_smooth(method="loess", na.rm = TRUE)+xlab("Fitted Value")
+p3t<-p3t+ylab("SquareRoot|Standardized residuals|")
+p3t<-p3t+ggtitle("Scale-Location")+theme_bw()
+p3t
+```
+
+
+### **Checking Individual Variables (Average Cost for Two)** - The linear regression with *Average Cost for Two* returns relatively random residuals
+
+```{r echo = F, fig.width=14}
+costreg = lm(Transformed_Rating~Avg_Cost_USD,data=india.data,weights = Votes)
+#check residual fitted plot
+ggplot(data=costreg,aes(y=.resid, x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+```
+
+### **City Regression** - Investigating if the predictor variable *City* can be transformed to improve the model
+
+```{r echo = F, fig.width=11}
+cityreg = lm(Transformed_Rating~City,data=india.data,weights = Votes)
+#check residual fitted plot
+ggplot(data=cityreg,aes(y=.resid, x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+
+```
+
+***
+
+At first glance, there seems to be some form of pattern with the residuals for the predictor variable: City. However, this residual plot may require further analysis since it is a categorical variable.
+
+###**City Regression (2)** - Seems to be non-normal distribution of principal cuisines residuals
+```{r echo = F, fig.width=13}
+cityreg = lm(Transformed_Rating~City,data=india.data,weights = Votes)
+plot(cityreg,2)
+
+cityreg.aug = augment(cityreg) 
+ggplot(cityreg.aug,aes(sample=.resid))+theme_bw()+stat_qq()+
+  stat_qq_line()+facet_wrap(~City)
+```
+
+
+### **Locality Regression** - The residual plot for the regression of Transformed Rating ~ Locality is random and raises no red flags.
+
+```{r echo = F, fig.width=14}
+locreg = lm(Transformed_Rating~Locality,data=india.data,weights = Votes)
+#check residual fitted plot
+ggplot(data=locreg,aes(y=.resid, x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+```
+
+### **Principal Cuisines Regression** - Similar to the regression for City, we experience dips in certain areas of the residual graph
+
+```{r echo = F, fig.width=14}
+cuisinereg = lm(Transformed_Rating~Principal_Cuisines,data=india.data,weights = Votes)
+#check residual fitted plot
+ggplot(data=cuisinereg,aes(y=.resid, x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+
+cuisinereg.aug = augment(cuisinereg) 
+d = ggplot(cuisinereg.aug,aes(sample=.resid))+theme_bw()+stat_qq()+
+  stat_qq_line()+facet_wrap(~Principal_Cuisines)
+d
+
+```
+
+### **Principal Cuisines Regression (2)** - Non-normal distribution of (most) principal cuisine residuals 
+
+```{r echo = F, fig.width=14}
+cureg = lm(Transformed_Rating~Principal_Cuisines,data=india.data,weights = Votes)
+plot(cureg,2)
+
+cuisinereg.aug = augment(cuisinereg) 
+ggplot(cuisinereg.aug,aes(sample=.resid))+theme_bw()+stat_qq()+
+  stat_qq_line()+facet_wrap(~Principal_Cuisines)
+
+```
+
+### **Booking Regression** - The traditional residual graph for the variable: Has Table Booking is hard to interpret as it is a binary variable
+
+```{r echo = F, fig.width=14}
+bookreg = lm(Transformed_Rating~Has_Table_Booking,data=india.data,weights = Votes)
+#check residual fitted plot
+ggplot(data=bookreg,aes(y=.resid, x=.fitted))+geom_point()+geom_smooth(se=F)+theme_bw()
+```
+
+
+### **Booking Regression (2)** - Using boxplots to analyze the residuals for *Booking Option* variable
+
+```{r echo = F, fig.width=13}
+#boxplot - booking vs residual
+bookreg.aug = augment(bookreg) 
+a = ggplot(bookreg.aug,aes(x=Has_Table_Booking,y=.resid))+geom_boxplot()+theme_bw()
+
+b = ggplot(bookreg.aug,aes(sample=.resid))+theme_bw()+stat_qq()+
+  stat_qq_line()+facet_wrap(~Has_Table_Booking)
+grid.arrange(a,b)
+```
+
+***
+Using boxplots we can graph the differences between the residuals and variable values. Notice that the median (and mean) is in the negatives, meaning the mean residuals for this linear regression are not zero. This could be one of the limitations causing our regression's diagnostic plots to appear distorted.
+
+### **Statistically Significant Predictors** - List of variables that are significantly better or worse than baselines: New Delhi, Connaught Place and North Indian
+
+```{r echo=FALSE}
+sig.stats = tidy(fit.2t) %>% filter(p.value<0.05) %>%  arrange(estimate)
+sig.stats = as.data.frame(sig.stats)
+DT::datatable(sig.stats, options = list(
+  bPaginate = FALSE))
+
+```
+
+***
+Please note that because we are working with categorical variables that contained many options, our term estimates are harder to interpret. In this case, because we set our baselines, the coefficent estimates in this table tell us how each term effects transformed rating when compared to *only* the base term.
+
+
+
+Conclusion {data-icon="fa-book"}
+=====================================
+The dataset we chose contained recorded information on 9551 different restaurants from around the world. A sample size this large is bound to contain useful information pertaining to restaurant performance.
+
+We began with data visualization in order to let the data paint its own picture and determine what areas are of interest. At first glance we notice that our data is heavily skewed, with more than 80% of the restaurants being located in India. With such a heavy skew, analyzing the data as a whole would be a mistake since the results of the other countries will be influenced by India.
+
+As such, we isolate the restaurants in India from the rest of the world and further investigate. Our key indicator of restaurant performance is its rating measure - both Rating Text and Aggregate Rating - the first allowing for a general overview and the latter for more accurate regression analysis.
+
+After identifying these trends among restaurants in India, we move on to analyze what variables actually affect restaurant performance. We identified a skew distribution in number of votes per restaurant during our exploratory analysis and take this into consideration when running our regression. We use votes as a weight parameter for our regression in order to obtain a better analysis. 
+
+Since we are working with a set range of ratings: 0 to 5, we set a limit to restrict regression estimates from going above or below this level and use this as our transformed response variable:
+$$0<log_{10}{\frac{Aggregate Rating}{5-Aggregate Rating}}<5$$
+
+After running diagnostic plot tests with our regression models we identify the following variables have correlation to restaurant rating:
+
+1. *Average Cost for Two (USD)* - Increasing cost results in increased rating
+2. *Locality* - Aminabad has better restaurant ratings than Connaught Place, while Spot 18 Mall (Pimple Saudagar) is much worse
+3. *City* - Mysore has restaurants with worse ratings than New Dehli
+4. *Booking Option* - Restaurants with the option to book are slightly worse off.
+5. *Principal Cuisines* - No cuisine type is significantly better than North Indian Cuisine
+
+Although we noted the regression results for the variable *Principal Cuisines* had no statistically significant estimates, it does not mean this variable is insignificant. As determined by our drop test, there does exist some significance for this category. Since our baseline was North Indian, our regression model tells us that there is no significant difference between North Indian vs other cuisines, however, there does exist significant differences between other cuisines. The same can be said for our other two variables *Locality* and *City*. 
+
+In general, the two variables *Average Cost for Two (USD)* and *Booking Option* can estimate the direct effect on restaurant ratings. For every dollar increase in average cost, transformed rating increases by *0.37365388* (holding all else constant) and for restaurants with the option to book ahead of time, surprisingly the transformed rating decreases by *0.09528946*. 
+
+It is important to note that our selected regression model does not directly return an estimated aggregate rating. Let Y be the estimated value the regression model outputs; in order to undo the transformation on our response variable, we must perform the following: $$Estimated Aggregate Rating = \frac{(5)(10)^{Y}}{1+10^{Y}}$$
+
+Discussion {data-icon="fa-comment-alt"}
+=====================================
+This study pertains to restaurants around the world and how their success varies, depending on variables measures. Within our exploratory analysis, we discover a major characteristic of this sample, which is how heavily skewed it is, with more than 80% of the data originating from India. We also take note of the second most concentrated country in our data, which is the United States. For this reason, it becomes illogical to analyze this data as a whole. This is why we start taking a closer look into India and the United States, in order to see how these countries, take influence and differ from each other. 
+
+Our primary interests of this study are to distinguish variables that may have a strong impact on the success of restaurants. Initially, we expected to see a generally significant correlation within the majority of our measures, against restaurant ratings. In reference to a few sources, we narrowed down our hypothesis to two variables, in which we suspected would have a strong hold on ratings. They were the location measures and Votes. After conducting various methods of analyzations, we come to conclude that the only variables that have a correlation to restaurant ratings are, Log of Average Cost USD, Locality, City and Booking Option. Note that this however, does not necessarily suggest that all the other measures were completely insignificant. 
+
+As mentioned previously, our study uses a fairly large dataset, containing information on 9551different restaurants from around the world. Normally, this would be associated with many benefits as it provokes accurate results; however, our greatest problem with this dataset is that it is heavily based in one specific country: India. This becomes a limitation when it fails to display a fair comparison within restaurants, as only a limited amount of information was retrieved for all the countries besides India. The uneven assortment of information makes it impossible to conclude with the accuracy that was originally intended. 
+
+Due to the heavy skewness of the data, it was difficult to fit a model that resulted in desirable diagnostic plots. Given these outliers, our selected regression model returned a randomly scattered residual fitted graph and showed normal distribution of errors for the bulk of the data. However, homogeneity of residual variance is where we run into another limitation. Since there is a lot of variability within our data, certain large outliers tend to skew our scale-location plot. 
+
+The other problematic nature of this dataset is that it did not provide other relative measures, that would likely have impacts on restaurant ratings as well. Many factors come into play when considering what is takes for consumers to enjoy their experiences in such places. This dataset provides a handful of variables, which was used to model and analyze the effects they had on the overall quality of restaurants. Other than these variables, there are many others to consider, such as the quality of service, layout, presentation, themes of the restaurants, and so on. In regard to this drawback, we have missed out on variables that may have had a significant impact on our findings. 
+
+In future studies, it will be beneficial to extend the number of variables by including the following:
+
+1. Quality of Service
+2. Quality of Food
+3. Presentation of Restaurant
+4. Cleanliness
+
+It is also important to note that working with data that provides a uniform distribution, regarding the sourcing of information, is crucial to studies in this field. In our experience, we were able to compare 2 of the most concentrated countries, India and United States; however, this was not a fair comparison as the amount of information on both these countries were extremely distinctive. We would also be recommended to pay close attention to the variables in question and whether it would be helpful to merge data from different sources, which would likely cover a greater scale of subjects, and thus conclude with even more accurate findings.
+
+The response variable *Aggregate Rating* did not explicitly define what aspect of the restaurant it was rating; rather it is assumed to be a general summation of all factors. Therefore, adding specific rating variables such as the ones listed above, will help better understand where these general ratings are coming from.
+
+References
+=====================================
+Jones, T. F., Pavlin, B. I., LaFleur, B. J., Ingram, L. A., & Schaffner, W. (2004). Restaurant Inspection Scores and Foodborne Disease. Emerg Infect Dis. 
+
+Anderson, M., & Magruder, J. (n.d.). Learning from the Crowd: Regression Discontinuity Estimates of the Effects of an Online Review Database*. The Economic Journal. 
+
+A very **special thanks** to Professor Ken Butler of Univeristy of Toronto for being such a big part of this study and lending us his expertise in regards to both statistical analysis and R coding. 
+
+
